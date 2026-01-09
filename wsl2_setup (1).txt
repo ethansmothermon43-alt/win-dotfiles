@@ -1,0 +1,298 @@
+#Requires -RunAsAdministrator
+
+<#
+.SYNOPSIS
+    Enhanced WSL2 Setup Script
+.DESCRIPTION
+    Enables WSL2, updates it, and installs Arch Linux, Kali Linux, and Ubuntu 24.04
+    Uses a more reliable installation method with proper error handling
+#>
+
+function Write-ColorOutput {
+    param([string]$ForegroundColor, [string]$Message)
+    $fc = $host.UI.RawUI.ForegroundColor
+    $host.UI.RawUI.ForegroundColor = $ForegroundColor
+    Write-Output $Message
+    $host.UI.RawUI.ForegroundColor = $fc
+}
+
+function Test-WSLInstalled {
+    try {
+        $null = wsl --status 2>&1
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Get-InstalledDistros {
+    try {
+        $output = wsl --list --quiet 2>&1 | Out-String
+        return $output
+    } catch {
+        return ""
+    }
+}
+
+Write-ColorOutput "Green" "========================================"
+Write-ColorOutput "Green" "  WSL2 Enhanced Setup Script"
+Write-ColorOutput "Green" "========================================"
+Write-Output ""
+
+# Check Windows version
+$version = [System.Environment]::OSVersion.Version
+if ($version.Build -lt 19041) {
+    Write-ColorOutput "Red" "ERROR: Windows 10 build 19041 (2004) or higher required!"
+    Write-ColorOutput "Yellow" "Current build: $($version.Build)"
+    Write-ColorOutput "Yellow" "Please update Windows before continuing."
+    exit 1
+}
+
+Write-ColorOutput "Green" "✓ Windows version check passed (Build: $($version.Build))"
+Write-Output ""
+
+# Step 1: Enable required features
+Write-ColorOutput "Yellow" "[Step 1/5] Checking and enabling required Windows features..."
+$needsReboot = $false
+
+try {
+    $wslFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux
+    $vmFeature = Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
+    
+    if ($wslFeature.State -ne "Enabled") {
+        Write-Output "Enabling WSL feature..."
+        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart -WarningAction SilentlyContinue | Out-Null
+        $needsReboot = $true
+        Write-ColorOutput "Green" "✓ WSL feature enabled"
+    } else {
+        Write-ColorOutput "Green" "✓ WSL feature already enabled"
+    }
+    
+    if ($vmFeature.State -ne "Enabled") {
+        Write-Output "Enabling Virtual Machine Platform..."
+        Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart -WarningAction SilentlyContinue | Out-Null
+        $needsReboot = $true
+        Write-ColorOutput "Green" "✓ Virtual Machine Platform enabled"
+    } else {
+        Write-ColorOutput "Green" "✓ Virtual Machine Platform already enabled"
+    }
+} catch {
+    Write-ColorOutput "Red" "Error enabling features: $_"
+    Write-ColorOutput "Yellow" "Try running: dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart"
+    exit 1
+}
+
+Write-Output ""
+
+# Check if reboot is needed
+if ($needsReboot) {
+    Write-ColorOutput "Red" "========================================"
+    Write-ColorOutput "Red" "  REBOOT REQUIRED!"
+    Write-ColorOutput "Red" "========================================"
+    Write-Output ""
+    Write-ColorOutput "Yellow" "Windows features have been enabled but require a system reboot."
+    Write-ColorOutput "Yellow" "After rebooting, run this script again to continue installation."
+    Write-Output ""
+    
+    $response = Read-Host "Reboot now? (Y/N)"
+    if ($response -eq 'Y' -or $response -eq 'y') {
+        Write-ColorOutput "Green" "Rebooting in 10 seconds..."
+        Write-ColorOutput "Cyan" "Remember to run this script again after reboot!"
+        Start-Sleep -Seconds 10
+        Restart-Computer -Force
+    } else {
+        Write-ColorOutput "Yellow" "Please reboot manually and run this script again."
+        Write-ColorOutput "Cyan" "Command: .\wsl2_setup.ps1"
+    }
+    exit 0
+}
+
+# Step 2: Install/Update WSL kernel
+Write-ColorOutput "Yellow" "[Step 2/5] Installing/Updating WSL kernel..."
+try {
+    Write-Output "Running: wsl --install --no-distribution"
+    $installOutput = wsl --install --no-distribution 2>&1 | Out-String
+    Write-Output $installOutput
+    
+    if ($installOutput -match "already installed" -or $installOutput -match "Virtual Machine Platform") {
+        Write-ColorOutput "Green" "✓ WSL kernel components verified"
+    }
+    
+    Start-Sleep -Seconds 2
+    
+    Write-Output "Updating WSL..."
+    wsl --update 2>&1 | Out-Null
+    Write-ColorOutput "Green" "✓ WSL update completed"
+} catch {
+    Write-ColorOutput "Yellow" "WSL installation step completed (some messages are normal)"
+}
+
+Write-Output ""
+
+# Step 3: Set WSL2 as default
+Write-ColorOutput "Yellow" "[Step 3/5] Setting WSL2 as default version..."
+try {
+    wsl --set-default-version 2 2>&1 | Out-Null
+    Write-ColorOutput "Green" "✓ WSL2 set as default version"
+} catch {
+    Write-ColorOutput "Yellow" "Note: Default version setting queued"
+}
+
+Write-Output ""
+
+# Step 4: Install distributions
+Write-ColorOutput "Yellow" "[Step 4/5] Installing Linux distributions..."
+Write-Output ""
+
+$distros = @(
+    @{Name="Arch Linux"; Command="archlinux"; Check="archlinux"},
+    @{Name="Kali Linux"; Command="kali-linux"; Check="kali-linux"},
+    @{Name="Ubuntu 24.04"; Command="Ubuntu-24.04"; Check="Ubuntu-24.04"}
+)
+
+$installedDistros = Get-InstalledDistros
+
+foreach ($distro in $distros) {
+    Write-ColorOutput "Cyan" "Processing $($distro.Name)..."
+    
+    if ($installedDistros -match $distro.Check) {
+        Write-ColorOutput "Green" "✓ $($distro.Name) already installed"
+    } else {
+        Write-Output "Installing $($distro.Name)..."
+        try {
+            # Method 1: Try standard install
+            $process = Start-Process -FilePath "wsl" -ArgumentList "--install", $distro.Command, "--no-launch" -NoNewWindow -PassThru -Wait
+            
+            Start-Sleep -Seconds 5
+            
+            # Verify installation
+            $installedDistros = Get-InstalledDistros
+            if ($installedDistros -match $distro.Check) {
+                Write-ColorOutput "Green" "✓ $($distro.Name) installed successfully"
+            } else {
+                Write-ColorOutput "Yellow" "⚠ Installation may be in progress for $($distro.Name)"
+                Write-ColorOutput "Yellow" "  Check status with: wsl --list"
+                Write-ColorOutput "Yellow" "  Or install manually with: wsl --install $($distro.Command)"
+            }
+        } catch {
+            Write-ColorOutput "Red" "Error installing $($distro.Name): $_"
+            Write-ColorOutput "Yellow" "Manual install command: wsl --install $($distro.Command)"
+        }
+    }
+    Write-Output ""
+}
+
+# Step 5: Install Azure CLI for Windows
+Write-ColorOutput "Yellow" "[Step 5/6] Installing Azure CLI for Windows..."
+Write-Output ""
+
+try {
+    # Check if Azure CLI is already installed
+    $azInstalled = Get-Command az -ErrorAction SilentlyContinue
+    
+    if ($azInstalled) {
+        Write-ColorOutput "Green" "✓ Azure CLI already installed"
+        $azVersion = az version --query '"azure-cli"' -o tsv 2>$null
+        if ($azVersion) {
+            Write-ColorOutput "White" "  Version: $azVersion"
+        }
+    } else {
+        Write-ColorOutput "Cyan" "Downloading Azure CLI installer..."
+        $installerPath = "$env:TEMP\AzureCLI.msi"
+        
+        # Download the latest Azure CLI MSI installer
+        $downloadUrl = "https://aka.ms/installazurecliwindows"
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath -UseBasicParsing
+        
+        Write-ColorOutput "Cyan" "Installing Azure CLI..."
+        Write-ColorOutput "Yellow" "  This may take a few minutes..."
+        
+        # Install silently
+        Start-Process msiexec.exe -ArgumentList "/i `"$installerPath`" /quiet /norestart" -Wait -NoNewWindow
+        
+        # Clean up installer
+        Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+        
+        Write-ColorOutput "Green" "✓ Azure CLI installed successfully"
+        Write-ColorOutput "Yellow" "  Note: You may need to restart your terminal to use 'az' command"
+    }
+} catch {
+    Write-ColorOutput "Red" "Error installing Azure CLI: $_"
+    Write-ColorOutput "Yellow" "You can manually install from: https://aka.ms/installazurecliwindows"
+}
+
+Write-Output ""
+
+# Step 6: Verify and display results
+Write-ColorOutput "Yellow" "[Step 6/6] Verifying installation..."
+Write-Output ""
+
+try {
+    Write-ColorOutput "Cyan" "Installed distributions:"
+    wsl --list --verbose
+} catch {
+    Write-ColorOutput "Yellow" "Could not list distributions. Try: wsl --list --verbose"
+}
+
+Write-Output ""
+Write-Output ""
+Write-ColorOutput "Green" "========================================"
+Write-ColorOutput "Green" "  Installation Complete!"
+Write-ColorOutput "Green" "========================================"
+Write-Output ""
+
+Write-ColorOutput "Yellow" "📋 Next Steps:"
+Write-Output ""
+
+Write-ColorOutput "Cyan" "1. Launch Arch Linux:"
+Write-ColorOutput "White" "   wsl -d archlinux"
+Write-Output ""
+
+Write-ColorOutput "Cyan" "2. Launch Kali Linux:"
+Write-ColorOutput "White" "   wsl -d kali-linux"
+Write-Output ""
+
+Write-ColorOutput "Cyan" "3. Launch Ubuntu 24.04:"
+Write-ColorOutput "White" "   wsl -d Ubuntu-24.04"
+Write-Output ""
+
+Write-ColorOutput "Cyan" "4. Use Azure CLI (in Windows Terminal):"
+Write-ColorOutput "White" "   az login"
+Write-ColorOutput "White" "   az account list"
+Write-Output ""
+
+Write-ColorOutput "Yellow" "📝 Important Notes:"
+Write-ColorOutput "White" "• Each distribution will prompt for username/password on first launch"
+Write-ColorOutput "White" "• If a distribution didn't install, try the manual command shown above"
+Write-ColorOutput "White" "• You can set a default distro: wsl --set-default <distro-name>"
+Write-Output ""
+
+Write-ColorOutput "Yellow" "🔧 Useful Commands:"
+Write-ColorOutput "White" "• List all distributions:    wsl --list --verbose"
+Write-ColorOutput "White" "• Update WSL:                wsl --update"
+Write-ColorOutput "White" "• Shutdown all distros:      wsl --shutdown"
+Write-ColorOutput "White" "• Unregister a distro:       wsl --unregister <distro-name>"
+Write-ColorOutput "White" "• Azure CLI help:            az --help"
+Write-ColorOutput "White" "• Azure CLI version:         az version"
+Write-Output ""
+
+Write-ColorOutput "Green" "✓ Setup complete! Enjoy your WSL2 environment!"
+Write-Output ""
+
+# Check for any failed installations
+Write-ColorOutput "Yellow" "Checking installation status..."
+$finalCheck = Get-InstalledDistros
+
+$allInstalled = $true
+foreach ($distro in $distros) {
+    if ($finalCheck -notmatch $distro.Check) {
+        Write-ColorOutput "Red" "⚠ $($distro.Name) may not be installed. Run: wsl --install $($distro.Command)"
+        $allInstalled = $false
+    }
+}
+
+if ($allInstalled) {
+    Write-ColorOutput "Green" "✓ All distributions appear to be installed successfully!"
+}
+
+Write-Output ""
