@@ -1,0 +1,255 @@
+# Starship Installation and Configuration Script for Windows PowerShell
+# Run this script with: powershell -ExecutionPolicy Bypass -File install.ps1
+
+Write-Host "🚀 Starting Starship installation for Windows..." -ForegroundColor Green
+Write-Host ""
+
+# Step 1: Install Starship via winget
+Write-Host "Step 1: Installing Starship..." -ForegroundColor Cyan
+Write-Host "Running: winget install --id Starship.Starship" -ForegroundColor Gray
+
+try {
+    winget install --id Starship.Starship --source winget --accept-source-agreements --accept-package-agreements
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "✓ Starship installed successfully" -ForegroundColor Green
+    } else {
+        Write-Host "⚠ Installation completed with warnings (this is usually OK)" -ForegroundColor Yellow
+    }
+    
+    # Refresh PATH to make starship available
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    Start-Sleep -Seconds 2
+    
+} catch {
+    Write-Host "⚠ Error during installation: $_" -ForegroundColor Yellow
+    Write-Host "Continuing with configuration..." -ForegroundColor Yellow
+}
+
+Write-Host ""
+
+# Step 2: Create config directory and file
+Write-Host "Step 2: Creating config directory and file..." -ForegroundColor Cyan
+Write-Host "Running: mkdir -p ~/.config && touch ~/.config/starship.toml" -ForegroundColor Gray
+
+$configDir = "$env:USERPROFILE\.config"
+$starshipConfig = "$configDir\starship.toml"
+
+# Create directory if it doesn't exist
+if (-not (Test-Path $configDir)) {
+    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    Write-Host "✓ Created directory: $configDir" -ForegroundColor Green
+} else {
+    Write-Host "✓ Directory already exists: $configDir" -ForegroundColor Green
+}
+
+# Backup existing config if it exists
+if (Test-Path $starshipConfig) {
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $backupPath = "$starshipConfig.backup_$timestamp"
+    Copy-Item $starshipConfig $backupPath -Force
+    Write-Host "✓ Backed up existing config to: $backupPath" -ForegroundColor Yellow
+}
+
+Write-Host ""
+
+# Step 3: Add custom config to starship.toml
+Write-Host "Step 3: Adding custom config to ~/.config/starship.toml..." -ForegroundColor Cyan
+
+$starshipConfigContent = @'
+# ~/.config/starship.toml
+
+add_newline = false
+command_timeout = 1000
+format = """$os$username$hostname$kubernetes$directory$git_branch$git_status"""
+
+# Drop ugly default prompt characters
+[character]
+success_symbol = ''
+error_symbol = ''
+
+# ---
+
+[os]
+format = '[$symbol](bold white) '   
+disabled = false
+
+[os.symbols]
+Windows = ''
+Arch = '󰣇'
+Ubuntu = ''
+Macos = '󰀵'
+# ---
+
+# Shows the username
+[username]
+style_user = 'white bold'
+style_root = 'black bold'
+format = '[$user]($style) '
+disabled = false
+show_always = true
+
+# Shows the hostname
+[hostname]
+ssh_only = false
+format = 'on [$hostname](bold yellow) '
+disabled = false
+
+# Shows current directory
+[directory]
+truncation_length = 1
+truncation_symbol = '…/'
+home_symbol = '󰋜 ~'
+read_only_style = '197'
+read_only = '  '
+format = 'at [$path]($style)[$read_only]($read_only_style) '
+
+# Shows current git branch
+[git_branch]
+symbol = ' '
+format = 'via [$symbol$branch]($style)'
+# truncation_length = 4
+truncation_symbol = '…/'
+style = 'bold green'
+
+# Shows current git status
+[git_status]
+format = '[$all_status$ahead_behind]($style) '
+style = 'bold green'
+conflicted = '🏳'
+up_to_date = ''
+untracked = ' '
+ahead = '⇡${count}'
+diverged = '⇕⇡${ahead_count}⇣${behind_count}'
+behind = '⇣${count}'
+stashed = ' '
+modified = ' '
+staged = '[++\($count\)](green)'
+renamed = '襁 '
+deleted = ' '
+
+# Shows kubernetes context and namespace
+[kubernetes]
+format = 'via [󱃾 $context\($namespace\)](bold purple) '
+disabled = false
+
+# ---
+
+[vagrant]
+disabled = true
+
+[docker_context]
+disabled = true
+
+[helm]
+disabled = true
+
+[python]
+disabled = true
+
+[nodejs]
+disabled = true
+
+[ruby]
+disabled = true
+
+[terraform]
+disabled = true
+'@
+
+Set-Content -Path $starshipConfig -Value $starshipConfigContent -Encoding UTF8
+Write-Host "✓ Custom config written to: $starshipConfig" -ForegroundColor Green
+
+Write-Host ""
+
+# Step 4: Configure PowerShell profile
+Write-Host "Step 4: Configuring PowerShell to initialize starship..." -ForegroundColor Cyan
+Write-Host "Adding to: `$PROFILE" -ForegroundColor Gray
+
+$profilePath = $PROFILE.CurrentUserAllHosts
+$profileDir = Split-Path -Parent $profilePath
+
+# Create profile directory if it doesn't exist
+if (-not (Test-Path $profileDir)) {
+    New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+    Write-Host "✓ Created profile directory" -ForegroundColor Green
+}
+
+# Backup existing profile
+if (Test-Path $profilePath) {
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $backupPath = "$profilePath.backup_$timestamp"
+    Copy-Item $profilePath $backupPath -Force
+    Write-Host "✓ Backed up existing profile to: $backupPath" -ForegroundColor Yellow
+}
+
+# Check if Starship is already in profile
+$profileContent = ""
+if (Test-Path $profilePath) {
+    $profileContent = Get-Content $profilePath -Raw
+}
+
+if ($profileContent -match "starship init") {
+    Write-Host "✓ Starship already configured in profile (skipping)" -ForegroundColor Yellow
+} else {
+    # Add Starship initialization to profile
+    $starshipInit = @'
+
+# Kubectl aliases (optional - comment out if not needed)
+function k { kubectl @args }
+function h { helm @args }
+
+function kn {
+    param([string]$namespace)
+    if ($namespace) {
+        kubectl config set-context --current --namespace=$namespace
+        Write-Host "✓ Namespace set to $namespace" -ForegroundColor Green
+    } else {
+        Write-Host "✗ Error, please provide a valid Namespace" -ForegroundColor Red
+    }
+}
+
+function knd {
+    kubectl config set-context --current --namespace=default
+    Write-Host "✓ Namespace set to Default" -ForegroundColor Green
+}
+
+function ku {
+    kubectl config unset current-context
+    Write-Host "✓ unset kubernetes current-context" -ForegroundColor Green
+}
+
+# Initialize Starship
+Invoke-Expression (&starship init powershell)
+'@
+
+    Add-Content -Path $profilePath -Value $starshipInit -Encoding UTF8
+    Write-Host "✓ Added 'Invoke-Expression (&starship init powershell)' to profile" -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "✅ Installation Complete!" -ForegroundColor Green
+Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "What was done:" -ForegroundColor Yellow
+Write-Host "  ✓ Installed Starship via winget" -ForegroundColor White
+Write-Host "  ✓ Created ~/.config/starship.toml with custom config" -ForegroundColor White
+Write-Host "  ✓ Added 'Invoke-Expression (&starship init powershell)' to `$PROFILE" -ForegroundColor White
+Write-Host "  ✓ Added kubectl helper functions (k, h, kn, knd, ku)" -ForegroundColor White
+Write-Host ""
+Write-Host "Next steps:" -ForegroundColor Yellow
+Write-Host "  1. Close this PowerShell window" -ForegroundColor White
+Write-Host "  2. Open a NEW PowerShell window to see your new prompt" -ForegroundColor White
+Write-Host "  3. Install a Nerd Font for icons: https://www.nerdfonts.com/" -ForegroundColor White
+Write-Host "     Recommended: CascadiaCode Nerd Font or FiraCode Nerd Font" -ForegroundColor Gray
+Write-Host "  4. Set the Nerd Font in Windows Terminal settings" -ForegroundColor White
+Write-Host ""
+Write-Host "Files created/modified:" -ForegroundColor Cyan
+Write-Host "  • Config: $starshipConfig" -ForegroundColor White
+Write-Host "  • Profile: $profilePath" -ForegroundColor White
+Write-Host ""
+Write-Host "To customize your prompt further, edit: $starshipConfig" -ForegroundColor Gray
+Write-Host ""
+Write-Host "Press Enter to exit..." -ForegroundColor Gray
+Read-Host
