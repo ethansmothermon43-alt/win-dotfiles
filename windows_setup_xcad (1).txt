@@ -1,0 +1,403 @@
+#Requires -RunAsAdministrator
+
+<#
+.SYNOPSIS
+    Windows Setup Script - Christian Lempa Configuration
+.DESCRIPTION
+    Configures Windows with dark mode, Christian Lempa's tools and settings, 
+    custom terminal configuration with xcad_tdl theme, and development environment.
+#>
+
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Windows Setup Script - Christian Lempa Style" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Function to check if running as administrator
+function Test-Administrator {
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+if (-not (Test-Administrator)) {
+    Write-Host "ERROR: This script must be run as Administrator!" -ForegroundColor Red
+    Write-Host "Right-click PowerShell and select 'Run as Administrator'" -ForegroundColor Yellow
+    pause
+    exit 1
+}
+
+# ============================================
+# 1. ENABLE DARK MODE
+# ============================================
+Write-Host "[1/8] Enabling Dark Mode..." -ForegroundColor Green
+
+# Enable dark mode for apps
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "AppsUseLightTheme" -Value 0 -Type DWord
+
+# Enable dark mode for system
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "SystemUsesLightTheme" -Value 0 -Type DWord
+
+Write-Host "✓ Dark mode enabled" -ForegroundColor Yellow
+
+# ============================================
+# 2. CONFIGURE TASKBAR (Christian Lempa Style)
+# ============================================
+Write-Host "[2/8] Configuring Taskbar..." -ForegroundColor Green
+
+# Small taskbar icons
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarSmallIcons" -Value 1 -Type DWord -ErrorAction SilentlyContinue
+
+# Hide search box/icon
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Value 0 -Type DWord
+
+# Hide Task View button
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord
+
+# Hide People icon
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\People" -Name "PeopleBand" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+
+# Hide News and Interests
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Feeds" -Name "ShellFeedsTaskbarViewMode" -Value 2 -Type DWord -ErrorAction SilentlyContinue
+
+# Show all tray icons
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" -Name "EnableAutoTray" -Value 0 -Type DWord
+
+Write-Host "✓ Taskbar configured" -ForegroundColor Yellow
+
+# ============================================
+# 3. INSTALL ANONYMICE NERD FONT COMPLETE
+# ============================================
+Write-Host "[3/8] Installing Anonymice Nerd Font Complete..." -ForegroundColor Green
+
+# Christian Lempa's specific Anonymice Nerd Font Complete
+$fontUrl = "https://github.com/ChristianLempa/dotfiles/raw/9e5c920fc48a7f76f0ec7a8b5e71c15747ac9869/Windows/Rainmeter/Skins/xcad/%40Resources/Fonts/Anonymice%20Nerd%20Font%20Complete.ttf"
+$fontFile = "$env:TEMP\Anonymice_Nerd_Font_Complete.ttf"
+
+try {
+    Write-Host "  Downloading Anonymice Nerd Font Complete from Christian Lempa's dotfiles..." -ForegroundColor Gray
+    Invoke-WebRequest -Uri $fontUrl -OutFile $fontFile -UseBasicParsing
+
+    # Install font
+    $shellApp = New-Object -ComObject Shell.Application
+    $fontsFolder = $shellApp.Namespace(0x14)
+    
+    Write-Host "  Installing Anonymice Nerd Font Complete..." -ForegroundColor Gray
+    $fontsFolder.CopyHere($fontFile, 0x10)
+
+    # Cleanup
+    Remove-Item -Path $fontFile -Force -ErrorAction SilentlyContinue
+
+    Write-Host "✓ Anonymice Nerd Font Complete installed" -ForegroundColor Yellow
+}
+catch {
+    Write-Host "✗ Error installing font: $_" -ForegroundColor Red
+    Write-Host "  Trying fallback AnonymousPro from Nerd Fonts releases..." -ForegroundColor Gray
+    
+    # Fallback to official Nerd Fonts release
+    $fallbackUrl = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/AnonymousPro.zip"
+    $fallbackZip = "$env:TEMP\AnonymousPro.zip"
+    $fallbackExtract = "$env:TEMP\AnonymousPro"
+    
+    try {
+        Invoke-WebRequest -Uri $fallbackUrl -OutFile $fallbackZip -UseBasicParsing
+        Expand-Archive -Path $fallbackZip -DestinationPath $fallbackExtract -Force
+        
+        $fonts = Get-ChildItem -Path $fallbackExtract -Include "*.ttf" -Recurse
+        foreach ($font in $fonts) {
+            Write-Host "  Installing $($font.Name)..." -ForegroundColor Gray
+            $fontsFolder.CopyHere($font.FullName, 0x10)
+        }
+        
+        Remove-Item -Path $fallbackZip -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $fallbackExtract -Recurse -Force -ErrorAction SilentlyContinue
+        
+        Write-Host "✓ Anonymice Nerd Font (fallback) installed" -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "✗ Error installing fallback font: $_" -ForegroundColor Red
+    }
+}
+
+# ============================================
+# 4. INSTALL WINGET PACKAGES
+# ============================================
+Write-Host "[4/8] Installing packages via winget..." -ForegroundColor Green
+
+$packages = @(
+    "Microsoft.PowerShell",
+    "Microsoft.WindowsTerminal",
+    "Git.Git",
+    "Docker.DockerDesktop",
+    "Microsoft.VisualStudioCode",
+    "Kubernetes.kubectl",
+    "Helm.Helm",
+    "HashiCorp.Terraform",
+    "HashiCorp.Vagrant",
+    "OpenSSL.OpenSSL",
+    "AgileBits.1Password",
+    "Microsoft.PowerToys"
+)
+
+foreach ($package in $packages) {
+    Write-Host "  Installing $package..." -ForegroundColor Gray
+    winget install --id $package --source winget --silent --accept-package-agreements --accept-source-agreements
+}
+
+Write-Host "✓ Packages installed" -ForegroundColor Yellow
+
+# ============================================
+# 5. CONFIGURE WINDOWS TERMINAL
+# ============================================
+Write-Host "[5/8] Configuring Windows Terminal..." -ForegroundColor Green
+
+$terminalSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+$iconDir = "$env:USERPROFILE\WindowsTerminalIcons"
+
+# Create icon directory
+if (-not (Test-Path $iconDir)) {
+    New-Item -Path $iconDir -ItemType Directory -Force | Out-Null
+}
+
+Write-Host "  Icon directory created at: $iconDir" -ForegroundColor Gray
+
+# Windows Terminal configuration with xcad_tdl theme and Anonymice Nerd Font
+$terminalConfig = @'
+{
+    "$schema": "https://aka.ms/terminal-profiles-schema",
+    "actions": [],
+    "alwaysShowNotificationIcon": false,
+    "profiles": 
+    {
+        "defaults": 
+        {
+            "colorScheme": "xcad_tdl",
+            "cursorShape": "filledBox",
+            "experimental.retroTerminalEffect": false,
+            "font": 
+            {
+                "face": "Anonymice Nerd Font",
+                "size": 14
+            },
+            "historySize": 12000,
+            "intenseTextStyle": "bright",
+            "opacity": 95,
+            "padding": "8",
+            "scrollbarState": "visible",
+            "useAcrylic": false
+        },
+        "list": 
+        [
+            {
+                "guid": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
+                "hidden": false,
+                "name": "Windows PowerShell"
+            }
+        ]
+    },
+    "schemes": 
+    [
+        {
+            "background": "#0F0F0F",
+            "black": "#000000",
+            "blue": "#2B4FFF",
+            "brightBlack": "#2F2F2F",
+            "brightBlue": "#5C78FF",
+            "brightCyan": "#5AC8FF",
+            "brightGreen": "#905AFF",
+            "brightPurple": "#5EA2FF",
+            "brightRed": "#BA5AFF",
+            "brightWhite": "#FFFFFF",
+            "brightYellow": "#685AFF",
+            "cursorColor": "#FFFFFF",
+            "cyan": "#28B9FF",
+            "foreground": "#F1F1F1",
+            "green": "#7129FF",
+            "name": "xcad_tdl",
+            "purple": "#2883FF",
+            "red": "#A52AFF",
+            "selectionBackground": "#FFFFFF",
+            "white": "#F1F1F1",
+            "yellow": "#3D2AFF"
+        },
+        {
+            "background": "#0F0F0F",
+            "black": "#000000",
+            "blue": "#2878FF",
+            "brightBlack": "#2F2F2F",
+            "brightBlue": "#5E99FF",
+            "brightCyan": "#5AD6FF",
+            "brightGreen": "#FFB15A",
+            "brightPurple": "#935CFF",
+            "brightRed": "#FF755A",
+            "brightWhite": "#FFFFFF",
+            "brightYellow": "#FFD25A",
+            "cursorColor": "#FFFFFF",
+            "cyan": "#28C8FF",
+            "foreground": "#F1F1F1",
+            "green": "#FF9A28",
+            "name": "xcad_tdl_colorful",
+            "purple": "#732BFF",
+            "red": "#FF4C27",
+            "selectionBackground": "#FFFFFF",
+            "white": "#F1F1F1",
+            "yellow": "#FFC72A"
+        },
+        {
+            "background": "#282C34",
+            "black": "#000000",
+            "blue": "#007ACC",
+            "brightBlack": "#75715E",
+            "brightBlue": "#11A8CD",
+            "brightCyan": "#11A8CD",
+            "brightGreen": "#0DBC79",
+            "brightPurple": "#AE81FF",
+            "brightRed": "#DD6B65",
+            "brightWhite": "#F8F8F2",
+            "brightYellow": "#E6DB74",
+            "cursorColor": "#FFFFFF",
+            "cyan": "#11A8CD",
+            "foreground": "#D4D4D4",
+            "green": "#0DBC79",
+            "name": "xcad_vscode",
+            "purple": "#BC3FBC",
+            "red": "#F4423A",
+            "selectionBackground": "#FFFFFF",
+            "white": "#F8F8F2",
+            "yellow": "#E5E510"
+        },
+        {
+            "background": "#111927",
+            "black": "#000000",
+            "blue": "#004CFF",
+            "brightBlack": "#666666",
+            "brightBlue": "#5CB2FF",
+            "brightCyan": "#5CECC6",
+            "brightGreen": "#C5F467",
+            "brightPurple": "#AE81FF",
+            "brightRed": "#FF8484",
+            "brightWhite": "#FFFFFF",
+            "brightYellow": "#FFCC5C",
+            "cursorColor": "#FFFFFF",
+            "cyan": "#2EE7B6",
+            "foreground": "#D4D4D4",
+            "green": "#9FEF00",
+            "name": "xcad_hackthebox",
+            "purple": "#BC3FBC",
+            "red": "#FF3E3E",
+            "selectionBackground": "#FFFFFF",
+            "white": "#FFFFFF",
+            "yellow": "#FFAF00"
+        }
+    ],
+    "showTabsInTitlebar": true,
+    "tabSwitcherMode": "inOrder",
+    "useAcrylicInTabRow": true
+}
+'@
+
+# Backup existing settings
+if (Test-Path $terminalSettingsPath) {
+    $backupPath = "$terminalSettingsPath.backup"
+    Copy-Item -Path $terminalSettingsPath -Destination $backupPath -Force
+    Write-Host "  Backed up existing settings to: $backupPath" -ForegroundColor Gray
+}
+
+# Write new settings
+$terminalConfig | Out-File -FilePath $terminalSettingsPath -Encoding UTF8 -Force
+
+Write-Host "✓ Windows Terminal configured with xcad_tdl theme and Anonymice Nerd Font" -ForegroundColor Yellow
+
+# ============================================
+# 6. DOWNLOAD AND SET WALLPAPER
+# ============================================
+Write-Host "[6/8] Setting wallpaper..." -ForegroundColor Green
+
+$wallpaperUrl = "https://github.com/ChristianLempa/hackbox/raw/main/src/assets/mr-robot-wallpaper.png"
+$wallpaperPath = "$env:USERPROFILE\Pictures\mr-robot-wallpaper.png"
+
+try {
+    # Download wallpaper
+    Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
+    
+    # Set as wallpaper
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public class Wallpaper {
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+}
+"@
+    
+    [Wallpaper]::SystemParametersInfo(0x0014, 0, $wallpaperPath, 0x0003)
+    
+    Write-Host "✓ Wallpaper set to Mr. Robot theme" -ForegroundColor Yellow
+}
+catch {
+    Write-Host "✗ Error setting wallpaper: $_" -ForegroundColor Red
+}
+
+# ============================================
+# 7. ENABLE WSL
+# ============================================
+Write-Host "[7/8] Enabling WSL..." -ForegroundColor Green
+
+try {
+    # Enable WSL and Virtual Machine Platform
+    dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+    dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+    
+    Write-Host "✓ WSL enabled (restart required)" -ForegroundColor Yellow
+}
+catch {
+    Write-Host "✗ Error enabling WSL: $_" -ForegroundColor Red
+}
+
+# ============================================
+# 8. FINAL CONFIGURATION
+# ============================================
+Write-Host "[8/8] Final configuration..." -ForegroundColor Green
+
+# Restart Explorer to apply taskbar changes
+Stop-Process -Name explorer -Force
+Start-Sleep -Seconds 2
+
+Write-Host "✓ Configuration complete" -ForegroundColor Yellow
+
+# ============================================
+# SUMMARY
+# ============================================
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Setup Complete!" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Installed/Configured:" -ForegroundColor Green
+Write-Host "  ✓ Dark mode enabled" -ForegroundColor White
+Write-Host "  ✓ Taskbar optimized (Christian Lempa style)" -ForegroundColor White
+Write-Host "  ✓ Anonymice Nerd Font Complete (from Christian Lempa's dotfiles)" -ForegroundColor White
+Write-Host "  ✓ Windows Terminal with xcad_tdl theme" -ForegroundColor White
+Write-Host "  ✓ PowerShell 7" -ForegroundColor White
+Write-Host "  ✓ Git" -ForegroundColor White
+Write-Host "  ✓ Docker Desktop" -ForegroundColor White
+Write-Host "  ✓ VS Code" -ForegroundColor White
+Write-Host "  ✓ kubectl" -ForegroundColor White
+Write-Host "  ✓ Helm" -ForegroundColor White
+Write-Host "  ✓ Terraform" -ForegroundColor White
+Write-Host "  ✓ Vagrant" -ForegroundColor White
+Write-Host "  ✓ OpenSSL" -ForegroundColor White
+Write-Host "  ✓ 1Password" -ForegroundColor White
+Write-Host "  ✓ PowerToys" -ForegroundColor White
+Write-Host "  ✓ WSL enabled" -ForegroundColor White
+Write-Host "  ✓ Mr. Robot wallpaper" -ForegroundColor White
+Write-Host ""
+Write-Host "Color Schemes Available:" -ForegroundColor Green
+Write-Host "  ✓ xcad_tdl (default)" -ForegroundColor White
+Write-Host "  ✓ xcad_tdl_colorful" -ForegroundColor White
+Write-Host "  ✓ xcad_vscode" -ForegroundColor White
+Write-Host "  ✓ xcad_hackthebox" -ForegroundColor White
+Write-Host ""
+Write-Host "Press any key to exit..." -ForegroundColor Gray
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
